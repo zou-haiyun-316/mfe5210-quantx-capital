@@ -1,0 +1,13 @@
+# Python 缓存（自动生成，不需要上传）
+__pycache__/
+*.pyc
+*.pyo
+
+# 数据库文件（本地数据，不上传）
+*.db
+
+# macOS 系统文件
+.DS_Store
+
+# 环境变量
+.env
