@@ -1,8 +1,9 @@
 """
-成员 C — 数据抓取管道
-负责从 Binance 交易所抓取加密货币历史K线数据，存入数据库
+Member C — Data Pipeline
+Fetches historical cryptocurrency candlestick data from Binance
+and stores it in the database.
 
-注意：使用 data-api.binance.vision 镜像，国内可访问
+Note: Uses the data-api.binance.vision mirror (accessible without VPN)
 """
 
 import time
@@ -15,7 +16,7 @@ import urllib.request
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from database.db_manager import save_klines, get_klines, init_database
 
-# 忽略 SSL 证书验证（国内网络环境）
+# Bypass SSL certificate verification (network environment compatibility)
 SSL_CTX = ssl.create_default_context()
 SSL_CTX.check_hostname = False
 SSL_CTX.verify_mode = ssl.CERT_NONE
@@ -24,7 +25,7 @@ BASE_URL = "https://data-api.binance.vision/api/v3"
 
 
 def _get(path: str, params: dict = None) -> dict:
-    """发送 GET 请求到 Binance 镜像 API"""
+    """Send a GET request to the Binance mirror API."""
     url = f"{BASE_URL}{path}"
     if params:
         query = "&".join(f"{k}={v}" for k, v in params.items())
@@ -34,24 +35,24 @@ def _get(path: str, params: dict = None) -> dict:
 
 
 # ================================================================
-# 核心：从 Binance 抓取K线数据
+# Core: fetch candlestick data from Binance
 # ================================================================
 
 def fetch_and_store_klines(symbol: str = "BTC/USDT",
                             timeframe: str = "1m",
                             days: int = 7):
     """
-    从 Binance 抓取历史K线数据并存入数据库
+    Fetch historical candlestick data from Binance and persist to the database.
 
-    参数：
-        symbol:    交易对，如 'BTC/USDT'（内部转为 BTCUSDT）
-        timeframe: 时间粒度，'1m'=1分钟，'5m'=5分钟，'1h'=1小时
-        days:      获取最近多少天的数据
+    Args:
+        symbol:    trading pair, e.g. 'BTC/USDT' (internally converted to BTCUSDT)
+        timeframe: candle interval — '1m' = 1 minute, '5m' = 5 minutes, '1h' = 1 hour
+        days:      number of past days to fetch
     """
     api_symbol = symbol.replace("/", "")  # BTC/USDT → BTCUSDT
-    print(f"[数据抓取] 开始获取 {symbol} {timeframe} 最近 {days} 天的数据...")
+    print(f"[Data Fetch] Fetching {symbol} {timeframe} data for the past {days} day(s)...")
 
-    # 计算起始时间（毫秒时间戳）
+    # Compute start timestamp (milliseconds)
     now_ms    = int(time.time() * 1000)
     since_ms  = now_ms - days * 24 * 60 * 60 * 1000
     batch_size = 1000
@@ -69,7 +70,7 @@ def fetch_and_store_klines(symbol: str = "BTC/USDT",
             if not raw:
                 break
 
-            # Binance K线格式：[开盘时间, 开, 高, 低, 收, 量, ...]
+            # Binance candle format: [open_time, open, high, low, close, volume, ...]
             klines = [[r[0], float(r[1]), float(r[2]),
                        float(r[3]), float(r[4]), float(r[5])] for r in raw]
             all_klines.extend(klines)
@@ -77,28 +78,29 @@ def fetch_and_store_klines(symbol: str = "BTC/USDT",
 
             from datetime import datetime
             last_time = datetime.fromtimestamp(klines[-1][0] / 1000).strftime("%Y-%m-%d %H:%M")
-            print(f"  已获取 {len(all_klines):,} 根K线，最新时间：{last_time}")
+            print(f"  Fetched {len(all_klines):,} bars — latest: {last_time}")
 
             time.sleep(0.15)
 
         except Exception as e:
-            print(f"  [警告] 请求失败：{e}，3秒后重试...")
+            print(f"  [Warning] Request failed: {e} — retrying in 3 seconds...")
             time.sleep(3)
 
     if all_klines:
         save_klines(symbol, timeframe, all_klines)
-        print(f"[数据抓取] 完成！共存入 {len(all_klines):,} 根K线数据")
+        print(f"[Data Fetch] Done! Stored {len(all_klines):,} bars.")
     else:
-        print("[数据抓取] 未获取到数据")
+        print("[Data Fetch] No data retrieved.")
 
     return len(all_klines)
 
 
 def fetch_latest_price(symbol: str = "BTC/USDT") -> float:
     """
-    获取当前最新价格（实时）
+    Fetch the current real-time price.
 
-    返回：当前价格（USDT）
+    Returns:
+        Current price in USDT.
     """
     api_symbol = symbol.replace("/", "")
     data = _get("/ticker/price", {"symbol": api_symbol})
@@ -108,23 +110,22 @@ def fetch_latest_price(symbol: str = "BTC/USDT") -> float:
 def get_historical_data_for_backtest(symbol: str = "BTC/USDT",
                                       timeframe: str = "1m") -> list:
     """
-    从数据库获取历史数据（给成员A回测使用的接口）
+    Retrieve historical data from the database (interface for Member A's backtester).
 
-    返回：
-        列表，每项为字典：
-        {open_time, open, high, low, close, volume}
+    Returns:
+        List of dicts: [{open_time, open, high, low, close, volume}, ...]
     """
     data = get_klines(symbol, timeframe, limit=100000)
-    print(f"[数据接口] 返回 {len(data):,} 条 {symbol} {timeframe} 数据")
+    print(f"[Data Interface] Returning {len(data):,} bars of {symbol} {timeframe} data")
     return data
 
 
 def check_data_quality(symbol: str = "BTC/USDT", timeframe: str = "1m"):
-    """检查数据库中数据的质量"""
+    """Check the quality of data currently stored in the database."""
     data = get_klines(symbol, timeframe, limit=100000)
 
     if not data:
-        print("[数据检查] 数据库中没有数据，请先运行 fetch_and_store_klines()")
+        print("[Data Quality] No data found in the database. Run fetch_and_store_klines() first.")
         return
 
     from datetime import datetime
@@ -132,20 +133,20 @@ def check_data_quality(symbol: str = "BTC/USDT", timeframe: str = "1m"):
     end_dt   = datetime.fromtimestamp(data[-1]['open_time'] / 1000).strftime("%Y-%m-%d %H:%M")
     prices   = [d["close"] for d in data]
 
-    print(f"\n[数据检查] {symbol} {timeframe} 数据质量报告")
-    print(f"  总数据条数：{len(data):,}")
-    print(f"  时间范围：  {start_dt} → {end_dt}")
-    print(f"  价格范围：  {min(prices):,.2f} ~ {max(prices):,.2f} USDT")
-    print(f"  平均价格：  {sum(prices)/len(prices):,.2f} USDT\n")
+    print(f"\n[Data Quality] {symbol} {timeframe} Data Quality Report")
+    print(f"  Total bars:    {len(data):,}")
+    print(f"  Time range:    {start_dt} → {end_dt}")
+    print(f"  Price range:   {min(prices):,.2f} ~ {max(prices):,.2f} USDT")
+    print(f"  Average price: {sum(prices)/len(prices):,.2f} USDT\n")
 
 
 if __name__ == "__main__":
     init_database()
 
-    # 测试价格获取
+    # Test price fetch
     price = fetch_latest_price("BTC/USDT")
-    print(f"当前 BTC/USDT 价格：{price:,.2f} USDT")
+    print(f"Current BTC/USDT price: {price:,.2f} USDT")
 
-    # 抓取历史数据
+    # Fetch historical data
     fetch_and_store_klines(symbol="BTC/USDT", timeframe="1m", days=7)
     check_data_quality(symbol="BTC/USDT", timeframe="1m")

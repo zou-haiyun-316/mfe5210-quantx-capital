@@ -1,8 +1,9 @@
 """
-成员 B — Paper Trading 执行系统（模拟交易）
-负责：接收策略信号 → 模拟下单 → 模拟撮合成交 → 更新持仓 → 存入数据库
+Member B — Paper Trading Execution System (Simulated Trading)
+Responsibilities: receive strategy signals → simulate order placement →
+simulate matching/fill → update positions → persist to database.
 
-Paper Trading = 用真实市场价格，但用虚拟资金，不会有真实的资金风险
+Paper Trading = uses real market prices with virtual capital; no real financial risk.
 """
 
 import sys
@@ -20,23 +21,23 @@ from database.db_manager import (
 )
 
 # ================================================================
-# 账户状态（内存中实时维护）
+# Account State (maintained in-memory in real time)
 # ================================================================
 
 class Account:
-    """模拟账户，维护现金和持仓信息"""
+    """Simulated account — tracks cash and position information."""
 
     def __init__(self, initial_cash: float = 50000.0):
-        self.cash         = initial_cash   # 可用现金（USDT）
-        self.holdings     = {}             # 持仓 {symbol: {"qty": float, "avg_cost": float}}
+        self.cash         = initial_cash   # Available cash (USDT)
+        self.holdings     = {}             # Positions: {symbol: {"qty": float, "avg_cost": float}}
         self.initial_cash = initial_cash
 
     def get_position(self, symbol: str) -> Dict:
-        """获取某个品种的持仓"""
+        """Return the current position for a given symbol."""
         return self.holdings.get(symbol, {"qty": 0.0, "avg_cost": 0.0})
 
     def total_value(self, current_prices: Dict[str, float]) -> float:
-        """计算账户总价值（现金 + 所有持仓市值）"""
+        """Compute total account value (cash + market value of all positions)."""
         position_value = sum(
             info["qty"] * current_prices.get(symbol, 0)
             for symbol, info in self.holdings.items()
@@ -44,7 +45,7 @@ class Account:
         return self.cash + position_value
 
     def unrealized_pnl(self, symbol: str, current_price: float) -> float:
-        """计算某个品种的未实现盈亏"""
+        """Compute unrealised P&L for a given symbol."""
         pos = self.get_position(symbol)
         if pos["qty"] <= 0:
             return 0.0
@@ -52,17 +53,17 @@ class Account:
 
 
 # ================================================================
-# 风控模块
+# Risk Management Module
 # ================================================================
 
 class RiskManager:
     """
-    风控管理器：防止账户过度亏损
+    Risk manager: prevents excessive account losses.
 
-    规则：
-      1. 单笔最大亏损：账户总值的 2%
-      2. 最大持仓比例：账户总值的 95%（保留5%现金）
-      3. 最大回撤止损：账户从峰值回撤超过 15% 时停止交易
+    Rules:
+      1. Max loss per trade: 2% of total account value
+      2. Max position size: 95% of total account value (keep 5% cash reserve)
+      3. Max drawdown stop: halt trading when account drops more than 15% from peak
     """
 
     def __init__(self, max_drawdown_limit: float = 0.15):
@@ -71,7 +72,7 @@ class RiskManager:
         self.trading_enabled    = True
 
     def check_drawdown(self, current_value: float) -> bool:
-        """检查是否触发最大回撤止损"""
+        """Check whether the maximum drawdown threshold has been breached."""
         if current_value > self.peak_value:
             self.peak_value = current_value
 
@@ -79,80 +80,80 @@ class RiskManager:
             drawdown = (self.peak_value - current_value) / self.peak_value
             if drawdown >= self.max_drawdown_limit:
                 self.trading_enabled = False
-                print(f"[风控] 最大回撤达到 {drawdown*100:.1f}%，超过限制 "
-                      f"{self.max_drawdown_limit*100:.0f}%，停止交易！")
+                print(f"[Risk] Max drawdown reached {drawdown*100:.1f}%, "
+                      f"exceeds limit {self.max_drawdown_limit*100:.0f}% — trading halted!")
                 return False
         return True
 
     def check_order(self, account: Account, symbol: str,
                     side: str, qty: float, price: float) -> bool:
-        """检查订单是否符合风控要求"""
+        """Validate an order against risk rules."""
         if not self.trading_enabled:
-            print("[风控] 交易已被暂停（触发最大回撤止损）")
+            print("[Risk] Trading is suspended (max drawdown stop triggered).")
             return False
 
         order_value = qty * price
 
         if side == "buy":
-            # 检查现金是否足够
+            # Check whether cash is sufficient
             if order_value > account.cash:
-                print(f"[风控] 现金不足，需要 {order_value:.2f} USDT，"
-                      f"可用 {account.cash:.2f} USDT")
+                print(f"[Risk] Insufficient cash: need {order_value:.2f} USDT, "
+                      f"available {account.cash:.2f} USDT")
                 return False
 
         elif side == "sell":
-            # 检查持仓是否足够
+            # Check whether position is sufficient
             pos = account.get_position(symbol)
             if qty > pos["qty"]:
-                print(f"[风控] 持仓不足，需卖出 {qty:.6f}，"
-                      f"实际持有 {pos['qty']:.6f}")
+                print(f"[Risk] Insufficient position: need to sell {qty:.6f}, "
+                      f"holding {pos['qty']:.6f}")
                 return False
 
         return True
 
 
 # ================================================================
-# 模拟撮合引擎（Paper Trading 核心）
+# Simulated Matching Engine (Paper Trading core)
 # ================================================================
 
 class PaperTrader:
     """
-    模拟交易执行器
-    接收策略信号，模拟撮合成交，更新账户状态，存入数据库
+    Simulated trade executor.
+    Receives strategy signals, simulates fills, updates account state, persists to database.
     """
 
-    COMMISSION_RATE = 0.001  # 手续费率：0.1%（Binance 现货）
+    COMMISSION_RATE = 0.001  # Commission rate: 0.1% (Binance spot)
 
     def __init__(self, initial_cash: float = 50000.0):
         self.account      = Account(initial_cash)
         self.risk_manager = RiskManager(max_drawdown_limit=0.15)
         self.order_history: List[Dict] = []
 
-        # 初始化数据库并记录初始账户状态
+        # Initialise database and record initial account snapshot
         init_database()
         save_account_snapshot(initial_cash, initial_cash)
         self.risk_manager.peak_value = initial_cash
-        print(f"[执行系统] 初始化完成，初始资金：{initial_cash:,.2f} USDT")
+        print(f"[Execution] Initialised. Starting capital: {initial_cash:,.2f} USDT")
 
     def execute_signal(self, signal: Dict, current_price: float,
                         symbol: str = "BTC/USDT") -> Optional[Dict]:
         """
-        执行一个策略信号
+        Execute a strategy signal.
 
-        参数：
-            signal:        策略信号 {"signal": "buy"/"sell"/"hold", ...}
-            current_price: 当前市场价格（模拟用，实盘从API获取）
-            symbol:        交易对
+        Args:
+            signal:        strategy signal {"signal": "buy"/"sell"/"hold", ...}
+            current_price: current market price (simulated; pulled from API in live mode)
+            symbol:        trading pair
 
-        返回：
-            成交记录（如果发生交易），否则返回 None
+        Returns:
+            Fill record if a trade occurred, otherwise None.
         """
         action = signal.get("signal", "hold")
 
         if action == "hold":
-            return None  # 观望，不操作
+            return None  # Hold — do nothing
 
-        # 计算交易数量
+        # Route to the appropriate execution handler
         if action == "buy":
             return self._execute_buy(symbol, current_price)
         elif action == "sell":
@@ -161,27 +162,27 @@ class PaperTrader:
         return None
 
     def _execute_buy(self, symbol: str, price: float) -> Optional[Dict]:
-        """执行买入操作"""
-        # 计算买入金额（使用95%的可用现金）
+        """Execute a buy order."""
+        # Deploy 95% of available cash
         spend = self.account.cash * 0.95
-        if spend < 1.0:  # 最低1U才下单
+        if spend < 1.0:  # Minimum order size: 1 USDT
             return None
 
-        # 计算买入数量（扣除手续费）
+        # Compute quantity after deducting commission
         commission = spend * self.COMMISSION_RATE
         qty = (spend - commission) / price
 
-        # 风控检查
+        # Risk check
         if not self.risk_manager.check_order(self.account, symbol, "buy", qty, price):
             return None
 
-        # 生成订单ID
+        # Generate order ID
         order_id = f"BUY_{uuid.uuid4().hex[:8].upper()}"
 
-        # 保存订单到数据库
+        # Persist order to database
         save_order(order_id, symbol, "buy", "market", price, qty, "filled")
 
-        # 更新账户状态
+        # Update account state
         pos = self.account.get_position(symbol)
         total_qty  = pos["qty"] + qty
         total_cost = pos["avg_cost"] * pos["qty"] + price * qty
@@ -190,14 +191,14 @@ class PaperTrader:
         self.account.cash -= spend
         self.account.holdings[symbol] = {"qty": total_qty, "avg_cost": new_avg_cost}
 
-        # 保存成交记录
+        # Persist fill record
         save_trade(order_id, symbol, "buy", price, qty, commission)
 
-        # 更新持仓数据库
+        # Update position in database
         unrealized = self.account.unrealized_pnl(symbol, price)
         update_position(symbol, total_qty, new_avg_cost, unrealized)
 
-        # 记录账户快照
+        # Record account snapshot
         total_value = self.account.total_value({symbol: price})
         save_account_snapshot(self.account.cash, total_value)
         self.risk_manager.check_drawdown(total_value)
@@ -213,45 +214,45 @@ class PaperTrader:
             "time":      datetime.now().isoformat(),
         }
         self.order_history.append(result)
-        print(f"[执行] 买入 {qty:.6f} {symbol} @ {price:.2f} USDT "
-              f"（花费 {spend:.2f} USDT，手续费 {commission:.4f} USDT）")
+        print(f"[Fill] Bought {qty:.6f} {symbol} @ {price:.2f} USDT "
+              f"(spent {spend:.2f} USDT, commission {commission:.4f} USDT)")
         return result
 
     def _execute_sell(self, symbol: str, price: float) -> Optional[Dict]:
-        """执行卖出操作（全仓卖出）"""
+        """Execute a sell order (liquidate full position)."""
         pos = self.account.get_position(symbol)
         if pos["qty"] <= 0:
             return None
 
         qty = pos["qty"]
 
-        # 风控检查
+        # Risk check
         if not self.risk_manager.check_order(self.account, symbol, "sell", qty, price):
             return None
 
-        # 计算收益
+        # Compute proceeds
         revenue    = qty * price
         commission = revenue * self.COMMISSION_RATE
         proceeds   = revenue - commission
         pnl        = proceeds - pos["avg_cost"] * qty
 
-        # 生成订单ID
+        # Generate order ID
         order_id = f"SELL_{uuid.uuid4().hex[:8].upper()}"
 
-        # 保存订单
+        # Persist order
         save_order(order_id, symbol, "sell", "market", price, qty, "filled")
 
-        # 更新账户
+        # Update account
         self.account.cash += proceeds
         self.account.holdings[symbol] = {"qty": 0.0, "avg_cost": 0.0}
 
-        # 保存成交记录
+        # Persist fill record
         save_trade(order_id, symbol, "sell", price, qty, commission)
 
-        # 更新持仓（清零）
+        # Clear position in database
         update_position(symbol, 0.0, 0.0, 0.0)
 
-        # 记录账户快照
+        # Record account snapshot
         total_value = self.account.total_value({symbol: price})
         save_account_snapshot(self.account.cash, total_value)
         self.risk_manager.check_drawdown(total_value)
@@ -269,12 +270,12 @@ class PaperTrader:
             "time":       datetime.now().isoformat(),
         }
         self.order_history.append(result)
-        print(f"[执行] 卖出 {qty:.6f} {symbol} @ {price:.2f} USDT "
-              f"（到账 {proceeds:.2f} USDT，盈亏 {pnl_str} USDT）")
+        print(f"[Fill] Sold {qty:.6f} {symbol} @ {price:.2f} USDT "
+              f"(received {proceeds:.2f} USDT, P&L {pnl_str} USDT)")
         return result
 
     def get_account_summary(self, current_price: float, symbol: str = "BTC/USDT") -> Dict:
-        """获取账户摘要（给GUI模块调用）"""
+        """Return account summary (called by the GUI module)."""
         pos         = self.account.get_position(symbol)
         total_value = self.account.total_value({symbol: current_price})
         unrealized  = self.account.unrealized_pnl(symbol, current_price)
@@ -296,17 +297,17 @@ class PaperTrader:
 
 
 # ================================================================
-# TCA — 交易成本分析（成员C的工作，放在这里方便联调）
+# TCA — Transaction Cost Analysis
 # ================================================================
 
 class TCAAnalyzer:
     """
-    交易成本分析（Transaction Cost Analysis）
-    分析实际交易中产生的各种成本
+    Transaction Cost Analysis.
+    Analyses the various costs incurred across all executed trades.
     """
 
     def analyze(self, orders: List[Dict]) -> Dict:
-        """分析所有交易的成本"""
+        """Analyse transaction costs across all orders."""
         if not orders:
             return {}
 
@@ -314,9 +315,9 @@ class TCAAnalyzer:
         sell_orders = [o for o in orders if o.get("action") == "sell"]
         total_pnl   = sum(o.get("pnl", 0) for o in sell_orders)
 
-        # 滑点分析（Paper Trading 中假设没有滑点，实盘会有）
-        # 实际成交价 vs 信号触发时的价格的差异
-        slippage_estimate = total_commission * 0.5  # 简化估算：滑点约为手续费的50%
+        # Slippage analysis (Paper Trading assumes zero slippage; live trading would incur it)
+        # Simplified estimate: slippage ≈ 50% of commission
+        slippage_estimate = total_commission * 0.5
 
         return {
             "total_commission":   round(total_commission, 4),
@@ -330,24 +331,24 @@ class TCAAnalyzer:
 
 
 if __name__ == "__main__":
-    # 简单测试
+    # Quick test
     trader = PaperTrader(initial_cash=50000.0)
 
-    # 模拟几笔交易
-    print("\n=== 模拟交易测试 ===")
+    # Simulate a few trades
+    print("\n=== Simulated Trade Test ===")
     trader.execute_signal({"signal": "buy"},  current_price=85000.0)
     trader.execute_signal({"signal": "hold"}, current_price=85200.0)
     trader.execute_signal({"signal": "sell"}, current_price=86000.0)
 
-    # 查看账户状态
+    # View account state
     summary = trader.get_account_summary(current_price=86000.0)
-    print("\n账户摘要：")
+    print("\nAccount Summary:")
     for k, v in summary.items():
         print(f"  {k}: {v}")
 
-    # TCA 分析
+    # TCA analysis
     tca = TCAAnalyzer()
     cost_report = tca.analyze(trader.order_history)
-    print("\nTCA 成本分析：")
+    print("\nTCA Cost Analysis:")
     for k, v in cost_report.items():
         print(f"  {k}: {v}")

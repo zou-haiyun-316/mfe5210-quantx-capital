@@ -1,17 +1,18 @@
 """
-Quant X Capital — 主程序入口
-一键运行完整的量化交易系统（数据获取 → 回测 → Paper Trading）
+Quant X Capital — Main Entry Point
+One-command execution of the full quantitative trading pipeline
+(Data Fetch → Backtest → Paper Trading)
 
-使用方式：
-  python main.py              # 完整流程（回测完成后会暂停，按 Enter 继续 Paper Trading）
-  python main.py --no-pause   # 完整流程，全自动运行，无需人工按 Enter
-  python main.py --backtest   # 只跑回测（自动写入 backtest_cache.json 供 GUI 读取）
-  python main.py --live       # 只跑实时模拟交易
-  python main.py --fetch      # 只获取历史数据
+Usage:
+  python main.py              # Full pipeline (pauses after backtest; press Enter to continue Paper Trading)
+  python main.py --no-pause   # Full pipeline, fully automated, no manual Enter required
+  python main.py --backtest   # Run backtest only (auto-writes backtest_cache.json for GUI)
+  python main.py --live       # Run paper trading only
+  python main.py --fetch      # Fetch historical data only
 
-注意：
-  - --backtest 运行完成后会自动写入 backtest_cache.json，GUI 读取此文件展示结果。
-  - 数据来源：data-api.binance.vision（Binance 公开镜像 API，直接 urllib 调用，无需 ccxt）
+Notes:
+  - --backtest automatically writes results to backtest_cache.json; the GUI reads from this file.
+  - Data source: data-api.binance.vision (Binance public mirror API, direct urllib call, no ccxt)
 """
 
 import sys
@@ -19,7 +20,7 @@ import os
 import time
 import argparse
 
-# 把项目根目录加到路径
+# Add project root to path
 sys.path.insert(0, os.path.dirname(__file__))
 
 from database.db_manager   import init_database
@@ -30,17 +31,17 @@ from execution.paper_trader import PaperTrader, TCAAnalyzer
 
 
 def run_backtest():
-    """步骤1：用历史数据回测策略"""
+    """Step 1: Backtest strategy on historical data"""
     print("\n" + "="*60)
-    print("   步骤 1/3：运行回测（历史数据验证策略）")
+    print("   Step 1/3: Running Backtest (Historical Data Validation)")
     print("="*60)
 
     data = get_historical_data_for_backtest("BTC/USDT", "1m")
     if len(data) < 50:
-        print(f"数据量不足（只有 {len(data)} 条），请先获取数据")
+        print(f"Insufficient data ({len(data)} bars). Please fetch data first.")
         return None
 
-    print(f"使用 {len(data)} 根K线数据进行回测...")
+    print(f"Running backtest on {len(data)} bars...")
     backtester = Backtester(initial_cash=50000.0)
     metrics    = backtester.run(data)
     print_backtest_report(metrics)
@@ -48,26 +49,26 @@ def run_backtest():
 
 
 def run_live_trading(rounds: int = 10):
-    """步骤2：模拟实时交易（Paper Trading）"""
+    """Step 2: Paper Trading (simulated live execution)"""
     print("\n" + "="*60)
-    print("   步骤 2/3：Paper Trading（模拟实时交易）")
+    print("   Step 2/3: Paper Trading (Simulated Live Execution)")
     print("="*60)
 
     trader = PaperTrader(initial_cash=50000.0)
     symbol = "BTC/USDT"
 
-    # 存储历史K线用于计算信号
+    # Store recent candles for signal computation
     price_history = []
 
-    print(f"\n开始模拟交易，共运行 {rounds} 轮（每轮间隔5秒）...")
-    print("（实际部署时改为无限循环，按 Ctrl+C 停止）\n")
+    print(f"\nStarting paper trading — {rounds} rounds (5-second interval each)...")
+    print("(In production, replace with an infinite loop; press Ctrl+C to stop)\n")
 
     for i in range(rounds):
         try:
-            # 获取最新价格
+            # Fetch latest price
             current_price = fetch_latest_price(symbol)
 
-            # 构建用于信号计算的数据
+            # Build a candle-like record for signal computation
             price_history.append({
                 "open_time": int(time.time() * 1000),
                 "open":   current_price,
@@ -76,126 +77,126 @@ def run_live_trading(rounds: int = 10):
                 "close":  current_price,
                 "volume": 10.0,
             })
-            # 最多保留最近100根用于计算指标
+            # Keep only the last 100 bars for indicator computation
             if len(price_history) > 100:
                 price_history = price_history[-100:]
 
-            # 生成信号
+            # Generate signal
             signal = get_latest_signal(price_history)
 
-            print(f"[轮次 {i+1:02d}/{rounds}] BTC: {current_price:,.2f} USDT | "
-                  f"得分: {signal['score'] or 0:.3f} | 信号: {signal['signal'].upper()}")
+            print(f"[Round {i+1:02d}/{rounds}] BTC: {current_price:,.2f} USDT | "
+                  f"Score: {signal['score'] or 0:.3f} | Signal: {signal['signal'].upper()}")
 
-            # 执行信号
+            # Execute signal
             trader.execute_signal(signal, current_price, symbol)
 
-            # 每5轮打印一次账户状态
+            # Print account summary every 5 rounds
             if (i + 1) % 5 == 0:
                 summary = trader.get_account_summary(current_price, symbol)
-                print(f"\n  账户状态：总值 {summary['total_value']:,.2f} USDT | "
-                      f"收益 {summary['total_pnl']:+.2f} USDT ({summary['total_return']:+.2f}%)\n")
+                print(f"\n  Account: Total {summary['total_value']:,.2f} USDT | "
+                      f"P&L {summary['total_pnl']:+.2f} USDT ({summary['total_return']:+.2f}%)\n")
 
-            time.sleep(5)  # 等待5秒再获取下一个价格
-
-        except KeyboardInterrupt:
-            print("\n用户停止交易")
-            break
-        except Exception as e:
-            print(f"[错误] {e}，5秒后继续...")
             time.sleep(5)
 
-    # 最终账户状态
+        except KeyboardInterrupt:
+            print("\nUser stopped trading.")
+            break
+        except Exception as e:
+            print(f"[Error] {e} — retrying in 5 seconds...")
+            time.sleep(5)
+
+    # Final account summary
     final_price   = fetch_latest_price(symbol)
     final_summary = trader.get_account_summary(final_price, symbol)
-    print(f"\n[交易结束] 最终账户总值：{final_summary['total_value']:,.2f} USDT")
-    print(f"           总收益：{final_summary['total_pnl']:+.2f} USDT ({final_summary['total_return']:+.2f}%)")
+    print(f"\n[Session End] Final account value: {final_summary['total_value']:,.2f} USDT")
+    print(f"              Total P&L: {final_summary['total_pnl']:+.2f} USDT ({final_summary['total_return']:+.2f}%)")
 
     return trader
 
 
 def run_tca(trader: PaperTrader):
-    """步骤3：TCA 交易成本分析"""
+    """Step 3: TCA — Transaction Cost Analysis"""
     print("\n" + "="*60)
-    print("   步骤 3/3：TCA 交易成本分析")
+    print("   Step 3/3: TCA — Transaction Cost Analysis")
     print("="*60)
 
     tca = TCAAnalyzer()
     report = tca.analyze(trader.order_history)
 
     if report:
-        print(f"  总手续费：    {report['total_commission']:.4f} USDT")
-        print(f"  预估滑点：    {report['estimated_slippage']:.4f} USDT")
-        print(f"  总交易成本：  {report['total_cost']:.4f} USDT")
-        print(f"  成本占收益比：{report['cost_as_pct_of_pnl']:.2f}%")
-        print(f"  总交易次数：  {report['num_trades']} 笔")
+        print(f"  Total Commission:    {report['total_commission']:.4f} USDT")
+        print(f"  Estimated Slippage:  {report['estimated_slippage']:.4f} USDT")
+        print(f"  Total Cost:          {report['total_cost']:.4f} USDT")
+        print(f"  Cost as % of P&L:   {report['cost_as_pct_of_pnl']:.2f}%")
+        print(f"  Total Trades:        {report['num_trades']}")
     else:
-        print("  暂无交易记录，TCA 无法计算")
+        print("  No trade history available — TCA cannot be computed.")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Quant X Capital 量化交易系统")
-    parser.add_argument("--backtest",  action="store_true", help="只运行回测")
-    parser.add_argument("--live",      action="store_true", help="只运行实时模拟交易")
-    parser.add_argument("--fetch",     action="store_true", help="只获取数据")
-    parser.add_argument("--rounds",    type=int, default=10, help="实时交易轮数")
+    parser = argparse.ArgumentParser(description="Quant X Capital — Algorithmic Trading System")
+    parser.add_argument("--backtest",  action="store_true", help="Run backtest only")
+    parser.add_argument("--live",      action="store_true", help="Run paper trading only")
+    parser.add_argument("--fetch",     action="store_true", help="Fetch historical data only")
+    parser.add_argument("--rounds",    type=int, default=10, help="Number of paper trading rounds")
     parser.add_argument("--no-pause",  action="store_true",
-                        help="完整流程不暂停，全自动运行（适合脚本调用）")
+                        help="Full pipeline without pause (fully automated, suitable for scripts)")
     args = parser.parse_args()
 
-    print("\n🚀 Quant X Capital — 量化交易系统启动")
+    print("\nQuant X Capital — Algorithmic Trading System Starting")
     print("="*60)
 
-    # 初始化数据库
+    # Initialize database
     init_database()
 
-    # 只获取数据
+    # Fetch data only
     if args.fetch:
-        print("\n获取 BTC/USDT 最近7天的1分钟K线数据...")
+        print("\nFetching BTC/USDT 1-minute candles for the past 7 days...")
         fetch_and_store_klines("BTC/USDT", "1m", days=7)
         check_data_quality("BTC/USDT", "1m")
         return
 
-    # 只回测
+    # Backtest only
     if args.backtest:
         run_backtest()
         return
 
-    # 只实时交易
+    # Paper trading only
     if args.live:
         trader = run_live_trading(rounds=args.rounds)
         run_tca(trader)
         return
 
-    # 默认：完整流程
-    print("\n将按以下顺序执行：")
-    print("  1. 获取历史数据（如果数据库已有数据则跳过）")
-    print("  2. 回测策略")
-    print("  3. Paper Trading（模拟实时交易 10 轮）")
-    print("  4. TCA 成本分析")
-    print("\n提示：同时在另一个终端运行 GUI：")
+    # Default: full pipeline
+    print("\nExecution order:")
+    print("  1. Fetch historical data (skip if database already has data)")
+    print("  2. Run backtest")
+    print("  3. Paper Trading (10 rounds of simulated live trading)")
+    print("  4. TCA cost analysis")
+    print("\nTip: Open the GUI in another terminal simultaneously:")
     print("  streamlit run gui/dashboard.py")
 
-    # 步骤0：检查数据
+    # Step 0: Check data availability
     data = get_historical_data_for_backtest("BTC/USDT", "1m")
     if len(data) < 50:
-        print("\n[数据] 数据库中数据不足，开始抓取...")
+        print("\n[Data] Insufficient data in database — fetching now...")
         fetch_and_store_klines("BTC/USDT", "1m", days=3)
 
-    # 步骤1：回测
+    # Step 1: Backtest
     run_backtest()
 
-    # 步骤2：实时模拟
-    # 使用 --no-pause 时跳过人工确认，实现真正的全自动运行
+    # Step 2: Paper Trading
+    # When --no-pause is set, skip manual confirmation for fully automated execution
     if not getattr(args, "no_pause", False):
-        input("\n回测完成！按 Enter 开始 Paper Trading...（或使用 --no-pause 跳过）")
+        input("\nBacktest complete! Press Enter to start Paper Trading... (or use --no-pause to skip)")
     else:
-        print("\n[自动模式] 回测完成，直接进入 Paper Trading...")
+        print("\n[Auto mode] Backtest complete — proceeding directly to Paper Trading...")
     trader = run_live_trading(rounds=args.rounds)
 
-    # 步骤3：TCA
+    # Step 3: TCA
     run_tca(trader)
 
-    print("\n✅ 全部完成！在浏览器中查看 Dashboard：")
+    print("\nAll done! View the Dashboard in your browser:")
     print("   streamlit run gui/dashboard.py")
 
 
