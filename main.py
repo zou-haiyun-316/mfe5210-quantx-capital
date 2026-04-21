@@ -3,9 +3,15 @@ Quant X Capital — 主程序入口
 一键运行完整的量化交易系统（数据获取 → 回测 → Paper Trading）
 
 使用方式：
-  python main.py          # 完整流程（推荐）
-  python main.py --backtest   # 只跑回测
+  python main.py              # 完整流程（回测完成后会暂停，按 Enter 继续 Paper Trading）
+  python main.py --no-pause   # 完整流程，全自动运行，无需人工按 Enter
+  python main.py --backtest   # 只跑回测（自动写入 backtest_cache.json 供 GUI 读取）
   python main.py --live       # 只跑实时模拟交易
+  python main.py --fetch      # 只获取历史数据
+
+注意：
+  - --backtest 运行完成后会自动写入 backtest_cache.json，GUI 读取此文件展示结果。
+  - 数据来源：data-api.binance.vision（Binance 公开镜像 API，直接 urllib 调用，无需 ccxt）
 """
 
 import sys
@@ -128,10 +134,12 @@ def run_tca(trader: PaperTrader):
 
 def main():
     parser = argparse.ArgumentParser(description="Quant X Capital 量化交易系统")
-    parser.add_argument("--backtest", action="store_true", help="只运行回测")
-    parser.add_argument("--live",     action="store_true", help="只运行实时模拟交易")
-    parser.add_argument("--fetch",    action="store_true", help="只获取数据")
-    parser.add_argument("--rounds",   type=int, default=10, help="实时交易轮数")
+    parser.add_argument("--backtest",  action="store_true", help="只运行回测")
+    parser.add_argument("--live",      action="store_true", help="只运行实时模拟交易")
+    parser.add_argument("--fetch",     action="store_true", help="只获取数据")
+    parser.add_argument("--rounds",    type=int, default=10, help="实时交易轮数")
+    parser.add_argument("--no-pause",  action="store_true",
+                        help="完整流程不暂停，全自动运行（适合脚本调用）")
     args = parser.parse_args()
 
     print("\n🚀 Quant X Capital — 量化交易系统启动")
@@ -177,7 +185,11 @@ def main():
     run_backtest()
 
     # 步骤2：实时模拟
-    input("\n回测完成！按 Enter 开始 Paper Trading...")
+    # 使用 --no-pause 时跳过人工确认，实现真正的全自动运行
+    if not getattr(args, "no_pause", False):
+        input("\n回测完成！按 Enter 开始 Paper Trading...（或使用 --no-pause 跳过）")
+    else:
+        print("\n[自动模式] 回测完成，直接进入 Paper Trading...")
     trader = run_live_trading(rounds=args.rounds)
 
     # 步骤3：TCA
