@@ -287,7 +287,7 @@ if mode == "实时监控":
 elif mode == "回测分析":
     st.title("🔬 回测绩效分析")
 
-    metrics, equity_curve, benchmark_curve, _ = load_backtest_cache()
+    metrics, equity_curve, benchmark_curve, bt_trades = load_backtest_cache()
 
     if metrics is None:
         st.error("未找到回测缓存，请运行：`python main.py --backtest`")
@@ -405,6 +405,66 @@ elif mode == "回测分析":
             ],
         }
         st.dataframe(pd.DataFrame(risk_data), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ---- 逐笔回测交易记录 ----
+    st.subheader("📋 逐笔回测交易记录")
+
+    if bt_trades:
+        rows = []
+        cumulative_pnl = 0.0
+        for t in bt_trades:
+            action   = t.get("action", "—")
+            price    = t.get("price", 0)
+            qty      = t.get("qty", 0)
+            fee      = t.get("fee", 0)
+            slippage = t.get("slippage", 0)
+            pnl      = t.get("pnl", None)
+            score    = t.get("score", None)
+            trade_val = price * qty
+
+            # 时间戳（毫秒）→ 可读时间
+            ts = t.get("time", 0)
+            try:
+                trade_time = datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                trade_time = "—"
+
+            if pnl is not None:
+                cumulative_pnl += pnl
+
+            rows.append({
+                "时间":           trade_time,
+                "方向":           "🟢 买入" if action == "buy" else "🔴 卖出",
+                "成交价(USDT)":   f"{price:,.2f}",
+                "数量(BTC)":      f"{qty:.6f}",
+                "成交额(USDT)":   f"{trade_val:,.2f}",
+                "手续费(USDT)":   f"{fee:.2f}",
+                "滑点(USDT)":     f"{slippage:.2f}",
+                "单笔盈亏(USDT)": f"{pnl:+.2f}" if pnl is not None else "—",
+                "累计盈亏(USDT)": f"{cumulative_pnl:+.2f}" if pnl is not None else "—",
+                "因子得分":       f"{score:.4f}" if score is not None else "—",
+            })
+
+        df_trades = pd.DataFrame(rows)
+        st.dataframe(df_trades, use_container_width=True, hide_index=True,
+                     height=min(500, 38 + len(df_trades) * 38))
+
+        sell_pnls  = [t.get("pnl", 0) for t in bt_trades
+                      if t.get("action") == "sell" and t.get("pnl") is not None]
+        total_fee  = sum(t.get("fee", 0) for t in bt_trades)
+        total_slip = sum(t.get("slippage", 0) for t in bt_trades)
+        n_buy  = sum(1 for t in bt_trades if t.get("action") == "buy")
+        n_sell = sum(1 for t in bt_trades if t.get("action") == "sell")
+        st.caption(
+            f"共 **{len(bt_trades)}** 笔成交（{n_buy} 买入 / {n_sell} 卖出）｜"
+            f"  累计盈亏：**{sum(sell_pnls):+.2f} USDT**｜"
+            f"  总手续费：**{total_fee:.2f} USDT**｜"
+            f"  总滑点：**{total_slip:.2f} USDT**"
+        )
+    else:
+        st.info("暂无回测交易记录，请运行 `python main.py --backtest` 生成。")
 
     st.divider()
 
