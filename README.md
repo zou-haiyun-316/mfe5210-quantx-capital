@@ -189,4 +189,26 @@ This project implements a **basic TCA (Transaction Cost Analysis)**, including:
 
 ---
 
+## Changelog
+
+### v1.2.0 — 2026-04-19
+- Added `--no-pause` flag to `main.py` for fully automated pipeline execution (no manual Enter required)
+- Backtest results are now auto-written to `backtest_cache.json` for GUI consistency
+- GUI dashboard (`dashboard.py`) reads exclusively from cache, removing runtime re-computation
+
+### v1.1.0 — 2026-04-15
+- Introduced paper trading module (`execution/paper_trader.py`) with risk control and TCA
+- Added max drawdown stop: trading halts when account drops more than 15% from peak
+- Integrated basic TCA reporting (commission + slippage breakdown per trade)
+
+### v1.0.0 — 2026-04-12
+- Initial release for MFE5210 course project
+- Implemented multi-factor momentum strategy (price momentum 40%, volume 30%, volatility 30%)
+- Built custom backtest engine with no look-ahead bias (signal on close of bar *i*, fill at open of bar *i+1*)
+- Integrated Binance public API data pipeline via `urllib` (no ccxt dependency)
+- Set up SQLite database with 5 tables via `database/db_manager.py`
+- Launched Streamlit GUI dashboard for real-time monitoring
+
+---
+
 *Quant X Capital © 2026 | MFE5210 CUHK(SZ)*
